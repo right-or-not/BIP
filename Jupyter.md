@@ -7,7 +7,7 @@ Pushing `Esc` to enter `Order Mode`, the following is the table of shortcut keys
 - A: Add `Code Cell` Above
 - B: Add `Code Cell` Below
 - M: Change `Code Cell` to `Markdown Cell`
-- C: Change `Markdown Cell` to `Code Cell`
+- Y: Change `Markdown Cell` to `Code Cell`
 - D D: Delete the Cell
 
 
