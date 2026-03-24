@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "control>=0.10.2",
+    "ffmpeg-python>=0.2.0",
     "jupyter>=1.1.1",
     "matplotlib>=3.10.8",
     "numpy>=2.4.2",
