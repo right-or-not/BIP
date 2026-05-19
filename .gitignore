@@ -11,3 +11,11 @@ wheels/
 
 # Settings of VSCode
 .vscode
+
+# images
+assets/
+
+# dataset of Project
+image/
+mask/
+Data_Proj2_Class/
