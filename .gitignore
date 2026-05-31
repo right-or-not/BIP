@@ -19,3 +19,7 @@ assets/
 image/
 mask/
 Data_Proj2_Class/
+image_*/
+
+# pdf files
+*.pdf

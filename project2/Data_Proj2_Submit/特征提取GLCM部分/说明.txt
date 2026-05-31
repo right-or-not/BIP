@@ -1,0 +1,3 @@
+feature_ranking.csv是按照前面选定的评估标准计算特征值的结果
+glcm_features_full_processed.csv是存储了所有样本的特征值计算结果
+Project2.ipynb是计算特征值和对应评估值的程序
