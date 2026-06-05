@@ -558,176 +558,301 @@ selected_feature_names = feature_selection_result["selected_features"]
 
 ## 5. 逐步分类
 
-由于直接三分类效果不稳定，本项目进一步尝试两阶段二分类策略：
+本节已重构为通用的两阶段二分类框架。总体目标是把一个三分类问题拆成两个二分类问题：
 
-1. 第一步：`vasc` vs `other`
-2. 第二步：在真实 `other` 数据中继续分 `mel` vs `nv`
+1. 第一阶段：从三类中先分出一个指定标签，例如 `vasc` vs `other`
+2. 第二阶段：对剩余两个指定标签继续二分类，例如 `mel` vs `nv`
+3. 综合阶段：如果第一阶段预测为指定标签，最终结果直接取该标签；否则进入第二阶段得到另一个标签
 
-### 5.0 第一步辅助函数
+两个阶段都可以独立配置：
 
-主要函数：
+- 第一阶段分出的标签是哪一个
+- 第二阶段继续分类的两个标签是哪两个
+- 第一阶段和第二阶段各自使用哪些特征
+- 第一阶段和第二阶段各自使用什么模型
+- 第一阶段和第二阶段各自的模型参数和调参网格
+
+### 5.0 两阶段数据划分函数
+
+本部分提供两个核心划分函数：
 
 | 函数 | 任务 | 输出 |
 |---|---|---|
-| `make_binary_labels` | 将指定正类映射为正类，其余类别合并为负类 | `np.ndarray` |
-| `resolve_training_feature_names` | 根据配置选择训练特征 | `list[str]` |
-| `print_training_feature_summary` | 打印当前使用的特征模式和特征名 | 控制台输出 |
-| `prepare_binary_classification_dataset` | 从 `feature_df` 构造二分类特征、标签和 group | `(features, binary_labels, groups)` |
-| `split_binary_classification_dataset` | 按 group 划分二分类训练集和测试集 | `dict` |
+| `prepare_first_stage_split` | 按 `base_id` 分组划分训练/测试集，并把标签转成 `first_positive_label` vs `negative_label` | 第一阶段 `dict` |
+| `prepare_second_stage_split` | 复用第一阶段的 train/test group，只保留第二阶段的两个真实标签 | 第二阶段 `dict` |
 
-训练特征可通过以下配置控制：
+第一阶段输出结构：
 
 ```python
-FEATURE_MODE = "all"        # all / selected / category / custom
-FEATURE_CATEGORIES = ("color",)
-CUSTOM_FEATURE_NAMES = None
-TOP_K_FEATURES = None
-```
-
-第一阶段划分结果格式：
-
-```python
-vasc_binary_split = {
+first_stage_split = {
     "x_train": np.ndarray,
     "x_test": np.ndarray,
-    "y_train": np.ndarray,        # vasc / other
+    "y_train": np.ndarray,           # first_positive_label / negative_label
     "y_test": np.ndarray,
+    "y_train_original": np.ndarray,  # 原始三分类标签
+    "y_test_original": np.ndarray,
+    "train_indices": np.ndarray,
+    "test_indices": np.ndarray,
     "train_groups": np.ndarray,
     "test_groups": np.ndarray,
     "train_group_ids": np.ndarray,
     "test_group_ids": np.ndarray,
-    "positive_label": "vasc",
-    "negative_label": "other",
+    "feature_names": list[str],
+    "positive_label": str,
+    "negative_label": str,
 }
 ```
 
-### 5.1 第一阶段 SVM
-
-使用 `vasc_binary_split` 中的数据训练 SVM：
+第二阶段输出结构：
 
 ```python
-binary_svm_model
-binary_svm_evaluation
+second_stage_split = {
+    "x_train": np.ndarray,
+    "x_test": np.ndarray,
+    "y_train": np.ndarray,       # second_labels 中的两个标签
+    "y_test": np.ndarray,
+    "train_indices": np.ndarray,
+    "test_indices": np.ndarray,
+    "train_groups": np.ndarray,
+    "test_groups": np.ndarray,
+    "train_group_ids": np.ndarray,
+    "test_group_ids": np.ndarray,
+    "feature_names": list[str],
+    "second_labels": tuple[str, str],
+}
 ```
 
-其中 `binary_svm_evaluation` 格式与第 3 节评估结果一致，`labels=['other', 'vasc']`。
-
-### 5.2 第一阶段随机森林
-
-使用 `vasc_binary_split` 中的数据训练随机森林：
+调试重点：
 
 ```python
-binary_rf_model
-binary_rf_evaluation
-binary_rf_feature_importances
+len(set(first_stage_split["train_groups"]) & set(first_stage_split["test_groups"]))
+len(set(second_stage_split["train_groups"]) & set(second_stage_split["test_groups"]))
 ```
 
-### 5.3 第一阶段 XGBoost
+这两个值都应该为 `0`，表示同一原始病灶及其增强图没有同时进入训练集和测试集。代码中也提供了 `assert_no_group_leakage`，一旦某个 `base_id` 同时出现在训练集和测试集，会直接抛出错误。
 
-使用 `vasc_binary_split` 中的数据训练 XGBoost：
+### 5.1 两阶段模型训练函数
+
+本部分提供一个统一训练入口：
+
+| 函数 | 任务 |
+|---|---|
+| `_normalize_model_type` | 将 `svm`、`rf`、`xgb` 等别名归一化 |
+| `train_stage_classifier` | 训练单个二分类模型，并封装成统一训练结果 |
+| `run_two_stage_training_pipeline` | 一次性完成两个阶段的数据划分、模型训练和结果封装 |
+
+支持的模型类型：
 
 ```python
-binary_xgb_result
-binary_xgb_evaluation
-binary_xgb_feature_importances
+'svm'
+'random_forest'
+'xgboost'
 ```
 
-其中 `binary_xgb_result` 包含模型和 `LabelEncoder`。
+统一训练示例：
 
-### 5.0 第二步辅助函数
+```python
+two_stage_result = run_two_stage_training_pipeline(
+    feature_df=labeled_feature_df,
+    first_positive_label='vasc',
+    second_labels=('mel', 'nv'),
+    first_feature_names=first_stage_feature_names,
+    second_feature_names=second_stage_feature_names,
+    first_model_type='random_forest',
+    second_model_type='random_forest',
+    first_model_params=FIRST_MODEL_PARAMS,
+    second_model_params=SECOND_MODEL_PARAMS,
+    negative_label='other',
+    test_size=0.3,
+    split_random_state=42,
+    model_random_state=42,
+)
+```
 
-第二阶段不重新划分训练集和测试集，而是复用第一阶段的 `train_group_ids` 和 `test_group_ids`，只保留真实标签为 `mel` 和 `nv` 的样本。
+`two_stage_result` 的主要结构：
 
-主要函数：
+```python
+two_stage_result = {
+    "first_stage_split": dict,
+    "second_stage_split": dict,
+    "first_model_result": dict,
+    "second_model_result": dict,
+    "first_model_type": str,
+    "second_model_type": str,
+    "first_model_params": dict,
+    "second_model_params": dict,
+    "first_positive_label": str,
+    "negative_label": str,
+    "second_labels": tuple[str, str],
+    "first_feature_names": list[str],
+    "second_feature_names": list[str],
+}
+```
+
+### 5.2 两阶段评估函数
+
+本部分提供两个评估函数：
 
 | 函数 | 任务 | 输出 |
 |---|---|---|
-| `prepare_second_stage_dataset` | 根据第一阶段 group split 构造 `mel` vs `nv` 数据集 | `dict` |
-| `combine_two_stage_predictions` | 将第一阶段和第二阶段预测组合成三分类预测 | `dict` |
-| `print_two_stage_evaluation` | 打印两阶段综合三分类评估 | 控制台输出 |
-
-第二阶段数据格式：
-
-```python
-second_stage_dataset = {
-    "x_train": np.ndarray,          # 真实 mel/nv 的训练样本
-    "x_test": np.ndarray,           # 真实 mel/nv 的测试样本
-    "y_train": np.ndarray,          # mel / nv
-    "y_test": np.ndarray,
-    "train_groups": np.ndarray,
-    "test_groups": np.ndarray,
-    "x_test_all": np.ndarray,       # 第一阶段完整测试集
-    "y_test_all": np.ndarray,       # 第一阶段完整测试集真实三分类标签
-    "test_groups_all": np.ndarray,
-    "first_positive_label": "vasc",
-    "second_labels": np.ndarray,
-}
-```
+| `evaluate_two_stage_models` | 分别评估第一阶段、第二阶段和最终串联三分类结果 | `dict` |
+| `print_two_stage_evaluation_results` | 打印三部分 hit rate、混淆矩阵、classification report 和特征重要性 | 控制台输出 |
 
 综合预测逻辑：
 
-```text
-如果第一阶段预测为 vasc：
-    最终预测 = vasc
-否则：
-    将该样本送入第二阶段模型
-    最终预测 = mel 或 nv
+```python
+if first_stage_prediction == first_positive_label:
+    final_prediction = first_positive_label
+else:
+    final_prediction = second_stage_model.predict(second_stage_features)
 ```
 
-综合评估结果格式：
+评估输出结构：
 
 ```python
 two_stage_evaluation = {
-    "hit_rate": float,
-    "confusion_matrix": np.ndarray,
-    "classification_report": str,
-    "classification_report_dict": dict,
-    "labels": ["mel", "nv", "vasc"],
-    "y_true": np.ndarray,
-    "y_pred": np.ndarray,
-    "first_stage_other_count": int,
+    "first_stage": dict,   # 第一阶段二分类 evaluate_model 结果
+    "second_stage": dict,  # 第二阶段二分类 evaluate_model 结果
+    "combined": {
+        "hit_rate": float,
+        "confusion_matrix": np.ndarray,
+        "classification_report": str,
+        "classification_report_dict": dict,
+        "labels": list[str],
+        "y_true": np.ndarray,
+        "y_pred": np.ndarray,
+        "first_stage_positive_count": int,
+        "second_stage_routed_count": int,
+    },
 }
 ```
 
-### 5.4 第二阶段 SVM
+建议每次调试都同时查看三块结果：
 
-使用 `second_stage_dataset` 训练 `mel` vs `nv` SVM：
+- 第一阶段是否把指定标签分出来
+- 第二阶段在真实剩余两类上是否足够稳定
+- 最终三分类是否因为第一阶段误分而影响整体结果
+
+### 5.3 两阶段联合超参数优化函数
+
+本部分提供统一调参入口：
+
+| 函数 | 任务 |
+|---|---|
+| `optimize_stage_hyperparameters` | 对单个阶段调用对应模型的 `GridSearchCV` 调参函数 |
+| `_convert_stage_search_params_to_training_params` | 将搜索参数名转换为训练函数参数名，主要用于 SVM |
+| `optimize_two_stage_hyperparameters` | 同时优化两个阶段，重新训练，并输出最终三分类评估 |
+
+调参示例：
 
 ```python
-second_stage_svm_model
-second_stage_svm_evaluation
+two_stage_optimization = optimize_two_stage_hyperparameters(
+    feature_df=labeled_feature_df,
+    first_positive_label='vasc',
+    second_labels=('mel', 'nv'),
+    first_feature_names=first_stage_feature_names,
+    second_feature_names=second_stage_feature_names,
+    first_model_type='random_forest',
+    second_model_type='random_forest',
+    first_param_grid=FIRST_PARAM_GRID,
+    second_param_grid=SECOND_PARAM_GRID,
+    cv=5,
+    scoring='accuracy',
+)
 ```
 
-### 5.5 第二阶段随机森林
-
-使用 `second_stage_dataset` 训练 `mel` vs `nv` 随机森林：
+输出结构：
 
 ```python
-second_stage_rf_model
-second_stage_rf_evaluation
-second_stage_rf_feature_importances
+two_stage_optimization = {
+    "first_optimization": dict,
+    "second_optimization": dict,
+    "first_best_params": dict,
+    "second_best_params": dict,
+    "two_stage_result": dict,
+    "evaluation": dict,
+}
 ```
+
+如果使用 XGBoost GPU，建议：
+
+```python
+FIRST_DEVICE = 'cuda'
+SECOND_DEVICE = 'cuda'
+FIRST_N_JOBS = 1
+SECOND_N_JOBS = 1
+```
+
+如果 GPU 显存仍然很空，可以小步尝试把对应的 `*_N_JOBS` 调到 `2`、`3` 或 `4`。
+
+### 5.4 基础两阶段实验入口
+
+基础实验 cell 通过配置变量控制整个流程：
+
+```python
+FIRST_STAGE_LABEL = 'vasc'
+SECOND_STAGE_LABELS = ('mel', 'nv')
+FIRST_FEATURE_MODE = 'selected'
+SECOND_FEATURE_MODE = 'all'
+FIRST_MODEL_TYPE = 'random_forest'
+SECOND_MODEL_TYPE = 'random_forest'
+```
+
+特征模式支持：
+
+| 模式 | 含义 |
+|---|---|
+| `all` | 使用全部特征 |
+| `selected` | 使用第 4 节筛选后的 `selected_feature_names` |
+| `category` | 使用指定特征类别，例如 `color`、`shape`、`asymmetry`、`glcm` |
+| `custom` | 使用手动列出的特征名 |
+
+常见调试方法：
+
+1. 先固定两个阶段都用 `random_forest`，确认流程可运行
+2. 检查两个阶段的 group overlap 是否都为 `0`
+3. 改 `FIRST_STAGE_LABEL` 测试先分出 `mel`、`nv` 或 `vasc` 哪个更好
+4. 分别调整 `FIRST_FEATURE_MODE` 和 `SECOND_FEATURE_MODE`，比较全特征与筛选特征
+5. 只改一个阶段模型，观察第一阶段、第二阶段和最终三分类各自变化
+6. 最后再打开联合调参，避免一开始就运行大网格
+
+### 5.5 两阶段联合调参实验入口
+
+联合调参 cell 默认：
+
+```python
+RUN_TWO_STAGE_OPTIMIZATION = False
+```
+
+需要调参时改为：
+
+```python
+RUN_TWO_STAGE_OPTIMIZATION = True
+```
+
+默认网格较小，适合先验证流程。确认无误后，再扩大 `FIRST_PARAM_GRID` 和 `SECOND_PARAM_GRID`。
 
 ## 6. 综合两步分类策略
 
-本节用于汇总两阶段分类策略的最终三分类表现。当前综合评估主要依赖第 5 节中的：
+第 5 节已经在 `evaluate_two_stage_models` 中完成两个二分类模型的串联预测，因此第 6 节可以用于汇总和比较多组两阶段实验结果。当前综合评估主要依赖：
 
 ```python
-combine_two_stage_predictions
-print_two_stage_evaluation
+evaluate_two_stage_models
+print_two_stage_evaluation_results
 ```
 
-可以分别组合：
+可以分别比较：
 
-- 第一阶段 SVM + 第二阶段 SVM
-- 第一阶段随机森林 + 第二阶段随机森林
-- 第一阶段 XGBoost + 第二阶段其他模型
+- 不同第一阶段标签：先分出 `vasc`、`mel` 或 `nv`
+- 不同模型组合：SVM + 随机森林、随机森林 + XGBoost 等
+- 不同特征组合：第一阶段用筛选特征，第二阶段用全特征或自定义特征
+- 不同调参策略：手动参数和 `optimize_two_stage_hyperparameters` 的自动调参结果
 
-最终输出均为三分类的：
+最终输出均包含：
 
-- Hit rate
-- Confusion matrix
-- Classification report
+- 第一阶段二分类 hit rate、混淆矩阵和 classification report
+- 第二阶段二分类 hit rate、混淆矩阵和 classification report
+- 两阶段串联后的三分类 hit rate、混淆矩阵和 classification report
 - `y_true`
 - `y_pred`
 
@@ -740,10 +865,12 @@ print_two_stage_evaluation
 | `all_features` | `np.ndarray` | 全部提取特征矩阵 |
 | `all_feature_names` | `list[str]` | 全部特征名 |
 | `selected_feature_names` | `list[str]` | 第 4 节筛选后的特征名 |
-| `vasc_binary_split` | `dict` | 第一步 `vasc` vs `other` 数据划分 |
-| `second_stage_dataset` | `dict` | 第二步 `mel` vs `nv` 数据 |
-| `*_evaluation` | `dict` | 模型评估结果 |
-| `*_feature_importances` | `list[tuple[str, float]]` | 树模型特征重要性 |
+| `first_stage_feature_names` | `list[str]` | 第一阶段使用的特征名 |
+| `second_stage_feature_names` | `list[str]` | 第二阶段使用的特征名 |
+| `two_stage_result` | `dict` | 两阶段划分、模型、参数和特征配置 |
+| `two_stage_evaluation` | `dict` | 第一阶段、第二阶段和综合三分类评估结果 |
+| `two_stage_optimization` | `dict` | 两阶段联合调参结果，仅在打开调参 cell 后生成 |
+| `*_feature_importances` | `list[tuple[str, float]]` | 树模型或线性 SVM 特征重要性 |
 
 ## 复现实验时的运行顺序
 

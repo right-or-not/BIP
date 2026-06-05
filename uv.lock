@@ -157,6 +157,7 @@ dependencies = [
     { name = "scipy" },
     { name = "seaborn" },
     { name = "simpleitk" },
+    { name = "skrebate" },
     { name = "umap-learn" },
     { name = "xgboost" },
 ]
@@ -179,6 +180,7 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.17.1" },
     { name = "seaborn", specifier = ">=0.13.2" },
     { name = "simpleitk", specifier = ">=2.5.5" },
+    { name = "skrebate", specifier = ">=0.62" },
     { name = "umap-learn", specifier = ">=0.5.12" },
     { name = "xgboost", specifier = ">=3.2.0" },
 ]
@@ -2153,6 +2155,17 @@ sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
 ]
+
+[[package]]
+name = "skrebate"
+version = "0.62"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scikit-learn" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ee/04/1fa0073d145cc38e1396ef21e8c6be998d152555c64d1d54db9ce8e2c62c/skrebate-0.62.tar.gz", hash = "sha256:b20dad4dc52f650e1f7960151314840f34251222cae0a78ac23d9f6d377ca558", size = 19835, upload-time = "2021-02-15T17:25:49.42Z" }
 
 [[package]]
 name = "soupsieve"
