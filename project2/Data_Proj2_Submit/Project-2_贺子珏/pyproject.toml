@@ -1,0 +1,28 @@
+[project]
+name = "bip_project_2"
+version = "0.1.0"
+description = "Submit file of Project 2 in BIP."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "control>=0.10.2",
+    "ffmpeg-python>=0.2.0",
+    "h5py>=3.16.0",
+    "jupyter>=1.1.1",
+    "matplotlib>=3.10.8",
+    "nibabel>=5.4.2",
+    "numpy>=2.4.2",
+    "opencv-python>=4.13.0.92",
+    "pandas>=3.0.1",
+    "pillow>=12.1.1",
+    "pywavelets>=1.9.0",
+    "radiomics>=0.1",
+    "scikit-image>=0.26.0",
+    "scikit-learn>=1.8.0",
+    "scipy>=1.17.1",
+    "seaborn>=0.13.2",
+    "simpleitk>=2.5.5",
+    "skrebate>=0.62",
+    "umap-learn>=0.5.12",
+    "xgboost>=3.2.0",
+]
